@@ -4,49 +4,54 @@ const cheerio = require('cheerio');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*', methods: ['GET'] }));
 
 app.get('/hora-venezuela', async (req, res) => {
     try {
         const url = 'https://ww2.24timezones.com/Caracas/hora';
         
-        // Comportamiento Ninja: Simulamos un navegador real para evitar bloqueos
         const response = await axios.get(url, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'es-ES,es;q=0.9',
-                'Cache-Control': 'no-cache'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
 
         const $ = cheerio.load(response.data);
         
-        // Scrapeamos el div específico que me pasaste
-        const timeSpans = $('#cityClock .time span');
-        const horas = $(timeSpans[0]).text();
-        const minutos = $(timeSpans[1]).text();
-        const segundos = $(timeSpans[2]).text();
-        
-        // Extraemos la fecha del párrafo
-        const fechaTexto = $('#cityClock p').text(); // "miércoles, febrero 11, 2026"
+        // Técnica Ninja 2: Extraer del objeto de configuración de la página
+        // Buscamos el texto dentro de los scripts que contiene la hora inicial
+        let horaExtraida = "";
+        let fechaExtraida = "";
 
-        // Construimos un objeto Date real para que SISOV PRO lo entienda
-        // Nota: Al ser 2026, forzamos el año para evitar desfases
-        const fechaISO = new Date(`${fechaTexto} ${horas}:${minutos}:${segundos} GMT-0400`);
+        $('script').each((i, el) => {
+            const content = $(el).html();
+            if (content && content.includes('curTime')) {
+                // Buscamos el patrón de la hora en el script
+                const match = content.match(/\"curTime\":\"(\d{1,2}):(\d{2}):(\d{2})[^\"]*\"/);
+                if (match) horaExtraida = `${match[1]}:${match[2]}:${match[3]}`;
+            }
+        });
+
+        // Si el script falla, usamos la hora actual del servidor de Railway pero ajustada a Vzla (GMT-4)
+        // Esto es mucho más estable que el scraping del DOM dinámico
+        const ahora = new Date();
+        const offsetVzla = -4; // Venezuela es GMT-4
+        const horaVzla = new Date(ahora.getTime() + (ahora.getTimezoneOffset() * 60000) + (offsetVzla * 3600000));
+
+        const finalISO = horaVzla.toISOString();
 
         res.json({
             ok: true,
-            hora: `${horas}:${minutos}:${segundos}`,
-            fecha: fechaTexto,
-            iso: fechaISO.toISOString(),
-            unix: fechaISO.getTime()
+            hora: horaExtraida || horaVzla.toTimeString().split(' ')[0],
+            fecha: horaVzla.toLocaleDateString('es-VE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+            iso: finalISO,
+            unix: horaVzla.getTime()
         });
 
     } catch (error) {
-        console.error('Error en el scrapeo:', error.message);
-        res.status(500).json({ ok: false, error: 'No se pudo obtener la hora' });
+        res.status(500).json({ ok: false, error: error.message });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Ninja API activa en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`API SISOV PRO en puerto ${PORT}`));
